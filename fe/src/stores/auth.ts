@@ -49,9 +49,8 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const response = await api.post('/auth/register', data)
       if (response.data.success) {
-        setTokens(response.data.data.accessToken, response.data.data.refreshToken)
-        user.value = response.data.data.user
-        return { success: true }
+        // Keep signup as a non-authenticated flow; user must login explicitly.
+        return { success: true, message: response.data.message }
       }
       return { success: false, message: response.data.message }
     } catch (error: any) {

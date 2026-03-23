@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
 import { useToast } from 'vue-toastification'
+import { usePagination } from '../composables/usePagination'
 
 const toast = useToast()
 
@@ -14,9 +15,22 @@ interface Contractor {
 
 const contractors = ref<Contractor[]>([])
 const loading = ref(true)
+const {
+  pageSize,
+  currentPage,
+  totalPages,
+  paginatedItems: paginatedContractors,
+  pageNumbers,
+  setPage
+} = usePagination(contractors, {
+  pageSize: 10,
+  resetOn: contractors
+})
 
 const topThree = computed(() => contractors.value.slice(0, 3))
 const others = computed(() => contractors.value.slice(3))
+
+const getDisplayRank = (index: number) => ((currentPage.value - 1) * pageSize) + index + 1
 
 const getRankColor = (rank: number) => {
   if (rank >= 1500) return 'text-yellow-600 dark:text-yellow-400'
@@ -171,14 +185,14 @@ onMounted(() => {
             </thead>
             <tbody>
               <tr
-                v-for="(contractor, index) in contractors"
+                v-for="(contractor, index) in paginatedContractors"
                 :key="contractor.memberId"
                 class="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
               >
                 <td class="py-4 px-4">
                   <div class="flex items-center">
                     <span :class="['text-lg font-bold', getMedalColor(index)]">
-                      {{ index < 3 ? '🏆' : `#${index + 1}` }}
+                      {{ getDisplayRank(index) <= 3 ? '🏆' : `#${getDisplayRank(index)}` }}
                     </span>
                   </div>
                 </td>
@@ -189,7 +203,7 @@ onMounted(() => {
                     </div>
                     <div>
                       <div class="font-medium text-gray-900 dark:text-white">{{ contractor.memberName }}</div>
-                      <div class="text-sm text-gray-600 dark:text-gray-400">Rank #{{ contractor.rank }}</div>
+                      <div class="text-sm text-gray-600 dark:text-gray-400">Rank #{{ getDisplayRank(index) }}</div>
                     </div>
                   </div>
                 </td>
@@ -211,6 +225,41 @@ onMounted(() => {
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <div v-if="contractors.length > pageSize" class="mt-4 border-t border-gray-200 dark:border-gray-700 pt-4">
+          <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <p class="text-sm text-gray-500 dark:text-gray-400">
+              Hiển thị {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, contractors.length) }} / {{ contractors.length }} nhà thầu
+            </p>
+            <div class="flex items-center gap-2 flex-wrap">
+              <button
+                class="btn-secondary px-3 py-1.5 text-sm"
+                :disabled="currentPage === 1"
+                @click="setPage(currentPage - 1)"
+              >
+                Trước
+              </button>
+              <button
+                v-for="page in pageNumbers"
+                :key="page"
+                class="px-3 py-1.5 text-sm rounded-lg border transition-colors"
+                :class="page === currentPage
+                  ? 'bg-primary-600 text-white border-primary-600'
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700'"
+                @click="setPage(page)"
+              >
+                {{ page }}
+              </button>
+              <button
+                class="btn-secondary px-3 py-1.5 text-sm"
+                :disabled="currentPage === totalPages"
+                @click="setPage(currentPage + 1)"
+              >
+                Sau
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 

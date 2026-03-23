@@ -5,6 +5,7 @@ import { useToast } from 'vue-toastification'
 import CalendarView from '../components/CalendarView.vue'
 import { PhListBullets, PhCalendar } from '@phosphor-icons/vue'
 import { useAuthStore } from '../stores/auth'
+import { usePagination } from '../composables/usePagination'
 
 const toast = useToast()
 const authStore = useAuthStore()
@@ -23,6 +24,7 @@ interface Booking {
   status: string
   price: number
   memberName: string
+  projectId?: string
 }
 
 interface Resource {
@@ -33,8 +35,14 @@ interface Resource {
   isActive: boolean
 }
 
+interface Project {
+  id: string
+  name: string
+}
+
 const bookings = ref<Booking[]>([])
 const resources = ref<Resource[]>([])
+const projects = ref<Project[]>([])
 const loading = ref(true)
 const showModal = ref(false)
 const selectedStatus = ref('all')
@@ -44,6 +52,7 @@ const bookingToConfirm = ref<Booking | null>(null)
 
 const newBooking = ref({
   resourceId: '',
+  projectId: '',
   startTime: '',
   endTime: '',
   notes: ''
@@ -79,6 +88,18 @@ const filteredBookings = computed(() => {
     return bookings.value
   }
   return bookings.value.filter(b => b.status === selectedStatus.value)
+})
+
+const {
+  pageSize,
+  currentPage,
+  totalPages,
+  paginatedItems: paginatedBookings,
+  pageNumbers,
+  setPage
+} = usePagination(filteredBookings, {
+  pageSize: 10,
+  resetOn: selectedStatus
 })
 
 const getStatusColor = (status: string) => {
@@ -150,6 +171,23 @@ const fetchResources = async () => {
   }
 }
 
+const fetchProjects = async () => {
+  try {
+    const response = await api.get('/projects/my')
+    // Extract projects from ApiResponse wrapper
+    if (response.data?.success && response.data?.data) {
+      projects.value = response.data.data.map((p: any) => ({
+        id: p.id,
+        name: p.name
+      }))
+    } else {
+      projects.value = []
+    }
+  } catch (error: any) {
+    toast.error('Không thể tải danh sách dự án')
+  }
+}
+
 const openModal = () => {
   if (!canCreateBooking.value) {
     toast.error('Bạn không có quyền đặt lịch tài nguyên')
@@ -170,6 +208,7 @@ const closeModal = () => {
   showModal.value = false
   newBooking.value = {
     resourceId: '',
+    projectId: '',
     startTime: '',
     endTime: '',
     notes: ''
@@ -205,9 +244,19 @@ const createBooking = async () => {
     return
   }
 
+  if (!newBooking.value.projectId) {
+    toast.error('Vui lòng chọn dự án')
+    return
+  }
+
   try {
     if (!recurring.value.enabled) {
-      await api.post('/bookings', newBooking.value)
+      await api.post('/bookings', {
+        resourceId: Number(newBooking.value.resourceId),
+        projectId: newBooking.value.projectId,
+        startTime: newBooking.value.startTime,
+        endTime: newBooking.value.endTime
+      })
       toast.success('Đặt lịch thành công!')
     } else {
       const startDateTime = new Date(newBooking.value.startTime)
@@ -230,6 +279,7 @@ const createBooking = async () => {
 
       const payload = {
         resourceId: Number(newBooking.value.resourceId),
+        projectId: newBooking.value.projectId,
         startDate: startDateTime.toISOString(),
         endDate: recurringEndDate.toISOString(),
         startTime: toTimeSpan(startDateTime),
@@ -316,6 +366,8 @@ const viewBooking = (booking: Booking) => {
 
 onMounted(() => {
   fetchBookings()
+  fetchResources()
+  fetchProjects()
   window.addEventListener('bookingStatusChanged', fetchBookings as EventListener)
 })
 
@@ -403,7 +455,7 @@ onUnmounted(() => {
     <!-- Bookings List -->
     <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div
-        v-for="booking in filteredBookings"
+        v-for="booking in paginatedBookings"
         :key="booking.id"
         class="card hover:shadow-lg transition-shadow"
       >
@@ -476,6 +528,41 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <div v-if="viewMode === 'list' && filteredBookings.length > pageSize" class="card">
+      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+          Hiển thị {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, filteredBookings.length) }} / {{ filteredBookings.length }} lịch đặt
+        </p>
+        <div class="flex items-center gap-2 flex-wrap">
+          <button
+            class="btn-secondary px-3 py-1.5 text-sm"
+            :disabled="currentPage === 1"
+            @click="setPage(currentPage - 1)"
+          >
+            Trước
+          </button>
+          <button
+            v-for="page in pageNumbers"
+            :key="page"
+            class="px-3 py-1.5 text-sm rounded-lg border transition-colors"
+            :class="page === currentPage
+              ? 'bg-primary-600 text-white border-primary-600'
+              : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700'"
+            @click="setPage(page)"
+          >
+            {{ page }}
+          </button>
+          <button
+            class="btn-secondary px-3 py-1.5 text-sm"
+            :disabled="currentPage === totalPages"
+            @click="setPage(currentPage + 1)"
+          >
+            Sau
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Create Booking Modal -->
     <div
       v-if="showModal"
@@ -494,6 +581,18 @@ onUnmounted(() => {
               <option value="">Chọn tài nguyên</option>
               <option v-for="resource in resources" :key="resource.id" :value="resource.id">
                 {{ resource.name }} - {{ formatCurrency(resource.hourlyRate) }}/giờ
+              </option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Dự án
+            </label>
+            <select v-model="newBooking.projectId" required class="input w-full">
+              <option value="">Chọn dự án</option>
+              <option v-for="project in projects" :key="project.id" :value="project.id">
+                {{ project.name }}
               </option>
             </select>
           </div>

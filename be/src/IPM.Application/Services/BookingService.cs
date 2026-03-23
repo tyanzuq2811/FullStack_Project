@@ -15,6 +15,7 @@ public class BookingService : IBookingService
     private readonly IRepository<Resource> _resourceRepository;
     private readonly IRepository<Booking> _bookingRepository;
     private readonly IRepository<Member> _memberRepository;
+    private readonly IRepository<Project> _projectRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICacheService _cacheService;
     private readonly INotificationService _notificationService;
@@ -23,6 +24,7 @@ public class BookingService : IBookingService
         IRepository<Resource> resourceRepository,
         IRepository<Booking> bookingRepository,
         IRepository<Member> memberRepository,
+        IRepository<Project> projectRepository,
         IUnitOfWork unitOfWork,
         ICacheService cacheService,
         INotificationService notificationService)
@@ -30,6 +32,7 @@ public class BookingService : IBookingService
         _resourceRepository = resourceRepository;
         _bookingRepository = bookingRepository;
         _memberRepository = memberRepository;
+        _projectRepository = projectRepository;
         _unitOfWork = unitOfWork;
         _cacheService = cacheService;
         _notificationService = notificationService;
@@ -93,6 +96,12 @@ public class BookingService : IBookingService
             return ApiResponse<BookingDto>.FailResponse("Thành viên không tồn tại");
         }
 
+        var project = await _projectRepository.GetByIdAsync(request.ProjectId, cancellationToken);
+        if (project == null)
+        {
+            return ApiResponse<BookingDto>.FailResponse("Dự án không tồn tại");
+        }
+
         var resource = await _resourceRepository.GetByIdAsync(request.ResourceId, cancellationToken);
         if (resource == null || !resource.IsActive)
         {
@@ -121,6 +130,7 @@ public class BookingService : IBookingService
             Id = Guid.NewGuid(),
             ResourceId = request.ResourceId,
             MemberId = memberId,
+            ProjectId = request.ProjectId,
             StartTime = request.StartTime,
             EndTime = request.EndTime,
             Price = price,
@@ -148,6 +158,7 @@ public class BookingService : IBookingService
                 resource.Name,
                 booking.MemberId,
                 member.FullName,
+                booking.ProjectId,
                 booking.StartTime,
                 booking.EndTime,
                 booking.Price,
@@ -172,6 +183,12 @@ public class BookingService : IBookingService
         if (member == null)
         {
             return ApiResponse<RecurringBookingResult>.FailResponse("Thành viên không tồn tại");
+        }
+
+        var project = await _projectRepository.GetByIdAsync(request.ProjectId, cancellationToken);
+        if (project == null)
+        {
+            return ApiResponse<RecurringBookingResult>.FailResponse("Dự án không tồn tại");
         }
 
         var resource = await _resourceRepository.GetByIdAsync(request.ResourceId, cancellationToken);
@@ -236,6 +253,7 @@ public class BookingService : IBookingService
                 Id = Guid.NewGuid(),
                 ResourceId = request.ResourceId,
                 MemberId = memberId,
+                ProjectId = request.ProjectId,
                 StartTime = slot.startTime,
                 EndTime = slot.endTime,
                 Price = pricePerSlot,
@@ -254,6 +272,7 @@ public class BookingService : IBookingService
                     resource.Name,
                     booking.MemberId,
                     member.FullName,
+                    booking.ProjectId,
                     booking.StartTime,
                     booking.EndTime,
                     booking.Price,
@@ -354,6 +373,7 @@ public class BookingService : IBookingService
                 b.Resource.Name,
                 b.MemberId,
                 b.Member.FullName,
+                b.ProjectId,
                 b.StartTime,
                 b.EndTime,
                 b.Price,
@@ -371,6 +391,7 @@ public class BookingService : IBookingService
         var booking = await _bookingRepository.Query()
             .Include(b => b.Resource)
             .Include(b => b.Member)
+            .Include(b => b.Project)
             .FirstOrDefaultAsync(b => b.Id == bookingId, cancellationToken);
 
         if (booking == null)
@@ -383,17 +404,17 @@ public class BookingService : IBookingService
             return ApiResponse<BookingDto>.FailResponse("Lịch đặt không ở trạng thái chờ thanh toán");
         }
 
-        var member = booking.Member;
-        if (member.WalletBalance < booking.Price)
+        var project = booking.Project;
+        if (project.WalletBalance < booking.Price)
         {
-            return ApiResponse<BookingDto>.FailResponse("Số dư ví không đủ");
+            return ApiResponse<BookingDto>.FailResponse("Ngân sách dự án không đủ");
         }
 
         await _unitOfWork.BeginTransactionAsync(cancellationToken);
         try
         {
-            member.WalletBalance -= booking.Price;
-            _memberRepository.Update(member);
+            project.WalletBalance -= booking.Price;
+            _projectRepository.Update(project);
 
             booking.Status = BookingStatus.Confirmed;
             _bookingRepository.Update(booking);
@@ -415,7 +436,8 @@ public class BookingService : IBookingService
                 booking.ResourceId,
                 booking.Resource.Name,
                 booking.MemberId,
-                member.FullName,
+                booking.Member.FullName,
+                booking.ProjectId,
                 booking.StartTime,
                 booking.EndTime,
                 booking.Price,

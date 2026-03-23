@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import api from '../services/api'
 import { useToast } from 'vue-toastification'
 import { useAuthStore } from '../stores/auth'
+import { usePagination } from '../composables/usePagination'
 import type { Project } from '../types'
 
 const toast = useToast()
@@ -34,6 +35,8 @@ const statusOptions = [
   { value: 3, label: 'Hoàn thành' }
 ]
 
+const MAX_TOTAL_BUDGET = 9999999999999999.99
+
 const filteredProjects = computed(() => {
   let filtered = projects.value
 
@@ -50,6 +53,18 @@ const filteredProjects = computed(() => {
   }
 
   return filtered
+})
+
+const {
+  pageSize,
+  currentPage,
+  totalPages,
+  paginatedItems: paginatedProjects,
+  pageNumbers,
+  setPage
+} = usePagination(filteredProjects, {
+  pageSize: 10,
+  resetOn: [searchQuery, selectedStatus]
 })
 
 const getStatusColor = (status: number) => {
@@ -167,6 +182,22 @@ const submitCreateProject = async () => {
     return
   }
 
+  const totalBudget = Number(createForm.value.totalBudget)
+  if (!Number.isFinite(totalBudget) || totalBudget <= 0) {
+    toast.error('Tổng ngân sách phải lớn hơn 0')
+    return
+  }
+
+  if (totalBudget > MAX_TOTAL_BUDGET) {
+    toast.error('Tổng ngân sách vượt quá giới hạn cho phép')
+    return
+  }
+
+  if (createForm.value.targetDate && new Date(createForm.value.targetDate) < new Date(createForm.value.startDate)) {
+    toast.error('Ngày dự kiến hoàn thành không được sớm hơn ngày bắt đầu')
+    return
+  }
+
   if (!authStore.user?.id) {
     toast.error('Không xác định được PM hiện tại')
     return
@@ -180,7 +211,7 @@ const submitCreateProject = async () => {
       managerId: authStore.user.id,
       startDate: createForm.value.startDate,
       targetDate: createForm.value.targetDate || null,
-      totalBudget: Number(createForm.value.totalBudget)
+      totalBudget
     }
 
     const response = await api.post('/projects', payload)
@@ -248,7 +279,7 @@ onMounted(() => {
 
     <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       <div
-        v-for="project in filteredProjects"
+        v-for="project in paginatedProjects"
         :key="project.id"
         class="card hover:shadow-lg transition-shadow cursor-pointer"
         @click="viewProject(project.id)"
@@ -311,6 +342,41 @@ onMounted(() => {
       </div>
     </div>
 
+    <div v-if="filteredProjects.length > pageSize" class="card">
+      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+          Hiển thị {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, filteredProjects.length) }} / {{ filteredProjects.length }} dự án
+        </p>
+        <div class="flex items-center gap-2 flex-wrap">
+          <button
+            class="btn-secondary px-3 py-1.5 text-sm"
+            :disabled="currentPage === 1"
+            @click="setPage(currentPage - 1)"
+          >
+            Trước
+          </button>
+          <button
+            v-for="page in pageNumbers"
+            :key="page"
+            class="px-3 py-1.5 text-sm rounded-lg border transition-colors"
+            :class="page === currentPage
+              ? 'bg-primary-600 text-white border-primary-600'
+              : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700'"
+            @click="setPage(page)"
+          >
+            {{ page }}
+          </button>
+          <button
+            class="btn-secondary px-3 py-1.5 text-sm"
+            :disabled="currentPage === totalPages"
+            @click="setPage(currentPage + 1)"
+          >
+            Sau
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showCreateModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div class="card w-full max-w-2xl">
         <div class="mb-4 flex items-center justify-between">
@@ -347,7 +413,7 @@ onMounted(() => {
 
           <div>
             <label class="label">Tổng ngân sách (VND)</label>
-            <input v-model="createForm.totalBudget" type="number" min="0" class="input" required placeholder="100000000" />
+            <input v-model="createForm.totalBudget" type="number" min="1" max="9999999999999999" class="input" required placeholder="100000000" />
           </div>
 
           <div class="flex justify-end gap-2 pt-2">

@@ -16,6 +16,7 @@ public record BookingDto(
     string ResourceName,
     Guid MemberId,
     string MemberName,
+    Guid ProjectId,
     DateTime StartTime,
     DateTime EndTime,
     decimal Price,
@@ -26,12 +27,14 @@ public record BookingDto(
 
 public record CreateBookingRequest(
     int ResourceId,
+    Guid ProjectId,
     DateTime StartTime,
     DateTime EndTime
 );
 
 public record RecurringBookingRequest(
     int ResourceId,
+    Guid ProjectId,
     DateTime StartDate,
     DateTime EndDate,
     TimeSpan StartTime,

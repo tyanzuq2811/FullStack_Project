@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import api from '../services/api'
 import { useToast } from 'vue-toastification'
+import { usePagination } from '../composables/usePagination'
 
 const toast = useToast()
 
@@ -17,6 +18,17 @@ interface News {
 const newsList = ref<News[]>([])
 const pinnedNews = ref<News[]>([])
 const loading = ref(true)
+const {
+  pageSize,
+  currentPage,
+  totalPages,
+  paginatedItems: paginatedNews,
+  pageNumbers,
+  setPage
+} = usePagination(newsList, {
+  pageSize: 10,
+  resetOn: newsList
+})
 
 const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleDateString('vi-VN', {
@@ -117,7 +129,7 @@ onMounted(() => {
 
         <div v-else class="space-y-4">
           <div
-            v-for="news in newsList"
+            v-for="news in paginatedNews"
             :key="news.id"
             class="card hover:shadow-lg transition-shadow"
           >
@@ -134,6 +146,41 @@ onMounted(() => {
               </div>
               <div v-if="news.updatedAt !== news.createdAt" class="text-sm text-gray-500 dark:text-gray-500">
                 Cập nhật: {{ formatDate(news.updatedAt) }}
+              </div>
+            </div>
+          </div>
+
+          <div v-if="newsList.length > pageSize" class="card">
+            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <p class="text-sm text-gray-500 dark:text-gray-400">
+                Hiển thị {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, newsList.length) }} / {{ newsList.length }} tin tức
+              </p>
+              <div class="flex items-center gap-2 flex-wrap">
+                <button
+                  class="btn-secondary px-3 py-1.5 text-sm"
+                  :disabled="currentPage === 1"
+                  @click="setPage(currentPage - 1)"
+                >
+                  Trước
+                </button>
+                <button
+                  v-for="page in pageNumbers"
+                  :key="page"
+                  class="px-3 py-1.5 text-sm rounded-lg border transition-colors"
+                  :class="page === currentPage
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700'"
+                  @click="setPage(page)"
+                >
+                  {{ page }}
+                </button>
+                <button
+                  class="btn-secondary px-3 py-1.5 text-sm"
+                  :disabled="currentPage === totalPages"
+                  @click="setPage(currentPage + 1)"
+                >
+                  Sau
+                </button>
               </div>
             </div>
           </div>

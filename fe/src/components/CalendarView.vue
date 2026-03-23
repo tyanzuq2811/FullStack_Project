@@ -10,6 +10,7 @@ interface Booking {
   status: string
   price: number
   memberName: string
+  projectId?: string
 }
 
 interface Props {

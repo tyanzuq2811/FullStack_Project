@@ -10,6 +10,7 @@ namespace IPM.Application.Services;
 
 public class ProjectService : IProjectService
 {
+    private const decimal MaxTotalBudget = 9999999999999999.99m;
     private readonly IRepository<Project> _projectRepository;
     private readonly IRepository<Member> _memberRepository;
     private readonly IRepository<ProjectTask> _taskRepository;
@@ -94,6 +95,26 @@ public class ProjectService : IProjectService
 
     public async Task<ApiResponse<ProjectDto>> CreateProjectAsync(CreateProjectRequest request, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            return ApiResponse<ProjectDto>.FailResponse("Tên dự án là bắt buộc");
+        }
+
+        if (request.TotalBudget <= 0)
+        {
+            return ApiResponse<ProjectDto>.FailResponse("Tổng ngân sách phải lớn hơn 0");
+        }
+
+        if (request.TotalBudget > MaxTotalBudget)
+        {
+            return ApiResponse<ProjectDto>.FailResponse("Tổng ngân sách vượt quá giới hạn cho phép");
+        }
+
+        if (request.TargetDate.HasValue && request.TargetDate.Value.Date < request.StartDate.Date)
+        {
+            return ApiResponse<ProjectDto>.FailResponse("Ngày dự kiến hoàn thành không được sớm hơn ngày bắt đầu");
+        }
+
         // Validate client and manager exist
         var client = await _memberRepository.GetByIdAsync(request.ClientId, cancellationToken);
         var manager = await _memberRepository.GetByIdAsync(request.ManagerId, cancellationToken);
@@ -120,8 +141,15 @@ public class ProjectService : IProjectService
             Status = ProjectStatus.Planning
         };
 
-        await _projectRepository.AddAsync(project, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _projectRepository.AddAsync(project, cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            return ApiResponse<ProjectDto>.FailResponse("Dữ liệu dự án không hợp lệ hoặc vượt giới hạn hệ thống");
+        }
 
         // Reload with navigation properties
         var createdProject = await _projectRepository.Query()
@@ -153,13 +181,37 @@ public class ProjectService : IProjectService
             project.TargetDate = request.TargetDate.Value;
 
         if (request.TotalBudget.HasValue)
+        {
+            if (request.TotalBudget.Value <= 0)
+            {
+                return ApiResponse<ProjectDto>.FailResponse("Tổng ngân sách phải lớn hơn 0");
+            }
+
+            if (request.TotalBudget.Value > MaxTotalBudget)
+            {
+                return ApiResponse<ProjectDto>.FailResponse("Tổng ngân sách vượt quá giới hạn cho phép");
+            }
+
             project.TotalBudget = request.TotalBudget.Value;
+        }
+
+        if (project.TargetDate.HasValue && project.TargetDate.Value.Date < project.StartDate.Date)
+        {
+            return ApiResponse<ProjectDto>.FailResponse("Ngày dự kiến hoàn thành không được sớm hơn ngày bắt đầu");
+        }
 
         if (request.Status.HasValue)
             project.Status = request.Status.Value;
 
-        _projectRepository.Update(project);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        try
+        {
+            _projectRepository.Update(project);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            return ApiResponse<ProjectDto>.FailResponse("Dữ liệu cập nhật không hợp lệ hoặc vượt giới hạn hệ thống");
+        }
 
         return ApiResponse<ProjectDto>.SuccessResponse(MapToDto(project), "Cập nhật dự án thành công");
     }

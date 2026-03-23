@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useMotion } from '@vueuse/motion'
 import { api } from '../services/api'
 import { useSignalR } from '../composables/useSignalR'
+import { usePagination } from '../composables/usePagination'
 import { useToast } from 'vue-toastification'
 import { useAuthStore } from '../stores/auth'
 import type { ProjectTask } from '../types'
@@ -108,6 +109,18 @@ const filteredTasks = computed(() => {
   }
 
   return result
+})
+
+const {
+  pageSize,
+  currentPage,
+  totalPages,
+  paginatedItems: paginatedTasks,
+  pageNumbers,
+  setPage
+} = usePagination(filteredTasks, {
+  pageSize: 10,
+  resetOn: [searchQuery, filter, sortBy]
 })
 
 const taskStats = computed(() => {
@@ -318,7 +331,7 @@ const getProgressColor = (progress: number) => {
     <!-- Task List -->
     <div v-else-if="filteredTasks.length > 0" class="space-y-4">
       <div
-        v-for="task in filteredTasks"
+        v-for="task in paginatedTasks"
         :key="task.id"
         v-motion
         :initial="{ opacity: 0, x: -20 }"
@@ -375,6 +388,41 @@ const getProgressColor = (progress: number) => {
                 Hoàn thành
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="filteredTasks.length > pageSize" class="card">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p class="text-sm text-gray-500 dark:text-gray-400">
+            Hiển thị {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, filteredTasks.length) }} / {{ filteredTasks.length }} công việc
+          </p>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button
+              class="btn-secondary px-3 py-1.5 text-sm"
+              :disabled="currentPage === 1"
+              @click="setPage(currentPage - 1)"
+            >
+              Trước
+            </button>
+            <button
+              v-for="page in pageNumbers"
+              :key="page"
+              class="px-3 py-1.5 text-sm rounded-lg border transition-colors"
+              :class="page === currentPage
+                ? 'bg-primary-600 text-white border-primary-600'
+                : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700'"
+              @click="setPage(page)"
+            >
+              {{ page }}
+            </button>
+            <button
+              class="btn-secondary px-3 py-1.5 text-sm"
+              :disabled="currentPage === totalPages"
+              @click="setPage(currentPage + 1)"
+            >
+              Sau
+            </button>
           </div>
         </div>
       </div>

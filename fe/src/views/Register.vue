@@ -34,8 +34,9 @@ const handleRegister = async () => {
   })
 
   if (result.success) {
-    toast.success('Đăng ký thành công!')
-    router.push('/')
+    toast.success(result.message || 'Đăng ký thành công! Vui lòng đăng nhập.')
+    authStore.logout()
+    router.push('/login')
   } else {
     toast.error(result.message || 'Đăng ký thất bại')
   }

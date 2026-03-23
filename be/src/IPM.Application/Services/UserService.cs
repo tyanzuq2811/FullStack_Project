@@ -12,15 +12,18 @@ namespace IPM.Application.Services;
 public class UserService : IUserService
 {
     private readonly IRepository<Member> _memberRepository;
+    private readonly IRepository<Project> _projectRepository;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly IUnitOfWork _unitOfWork;
 
     public UserService(
         IRepository<Member> memberRepository,
+        IRepository<Project> projectRepository,
         UserManager<ApplicationUser> userManager,
         IUnitOfWork unitOfWork)
     {
         _memberRepository = memberRepository;
+        _projectRepository = projectRepository;
         _userManager = userManager;
         _unitOfWork = unitOfWork;
     }
@@ -267,12 +270,47 @@ public class UserService : IUserService
 
         var user = await _userManager.FindByIdAsync(member.UserId);
 
-        // Soft delete - just deactivate
-        member.IsActive = false;
-        _memberRepository.Update(member);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        var hasProjectsAsClient = await _projectRepository.Query()
+            .AnyAsync(p => p.ClientId == member.Id, cancellationToken);
 
-        return ApiResponse<bool>.SuccessResponse(true, "Đã vô hiệu hóa người dùng");
+        if (hasProjectsAsClient)
+        {
+            return ApiResponse<bool>.FailResponse("Không thể xóa người dùng đang là khách hàng của dự án. Vui lòng chuyển dự án cho tài khoản khác trước.");
+        }
+
+        var hasProjectsAsManager = await _projectRepository.Query()
+            .AnyAsync(p => p.ManagerId == member.Id, cancellationToken);
+
+        if (hasProjectsAsManager)
+        {
+            return ApiResponse<bool>.FailResponse("Không thể xóa người dùng đang là quản lý dự án. Vui lòng chuyển PM cho dự án trước.");
+        }
+
+        await _unitOfWork.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            _memberRepository.Remove(member);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            if (user != null)
+            {
+                var deleteUserResult = await _userManager.DeleteAsync(user);
+                if (!deleteUserResult.Succeeded)
+                {
+                    await _unitOfWork.RollbackTransactionAsync(cancellationToken);
+                    return ApiResponse<bool>.FailResponse(string.Join(", ", deleteUserResult.Errors.Select(e => e.Description)));
+                }
+            }
+
+            await _unitOfWork.CommitTransactionAsync(cancellationToken);
+        }
+        catch
+        {
+            await _unitOfWork.RollbackTransactionAsync(cancellationToken);
+            throw;
+        }
+
+        return ApiResponse<bool>.SuccessResponse(true, "Đã xóa người dùng khỏi hệ thống");
     }
 
     public async Task<ApiResponse<bool>> ChangeUserPasswordAsync(Guid id, ChangeUserPasswordRequest request, CancellationToken cancellationToken = default)

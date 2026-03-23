@@ -90,7 +90,7 @@ public class UsersController : ControllerBase
     }
 
     /// <summary>
-    /// Delete/Deactivate user (Admin only)
+    /// Permanently delete user (Admin only)
     /// </summary>
     [HttpDelete("{id}")]
     [Authorize(Roles = "Admin")]

@@ -108,8 +108,13 @@ public class AuthService : IAuthService
             return ApiResponse<LoginResponse>.FailResponse("Đăng ký thất bại", result.Errors.Select(e => e.Description).ToList());
         }
 
-        // Assign default role
-        await _userManager.AddToRoleAsync(user, "Subcontractor");
+        // Public signup is always Client; internal roles are assigned by Admin.
+        var addRoleResult = await _userManager.AddToRoleAsync(user, "Client");
+        if (!addRoleResult.Succeeded)
+        {
+            await _userManager.DeleteAsync(user);
+            return ApiResponse<LoginResponse>.FailResponse("Đăng ký thất bại", addRoleResult.Errors.Select(e => e.Description).ToList());
+        }
 
         // Create member profile
         var member = new Member

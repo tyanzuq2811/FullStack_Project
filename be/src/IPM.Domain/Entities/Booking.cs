@@ -7,6 +7,7 @@ public class Booking
     public Guid Id { get; set; }
     public int ResourceId { get; set; }
     public Guid MemberId { get; set; }
+    public Guid ProjectId { get; set; }
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
     public decimal Price { get; set; } = 0;
@@ -18,4 +19,5 @@ public class Booking
     // Navigation properties
     public virtual Resource Resource { get; set; } = null!;
     public virtual Member Member { get; set; } = null!;
+    public virtual Project Project { get; set; } = null!;
 }

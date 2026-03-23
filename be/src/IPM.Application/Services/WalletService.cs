@@ -104,6 +104,21 @@ public class WalletService : IWalletService
 
     public async Task<ApiResponse<TransactionDto>> RequestDepositAsync(Guid memberId, DepositRequest request, CancellationToken cancellationToken = default)
     {
+        if (request.Amount <= 0)
+        {
+            return ApiResponse<TransactionDto>.FailResponse("Số tiền nạp phải lớn hơn 0");
+        }
+
+        if (request.ProjectId == Guid.Empty)
+        {
+            return ApiResponse<TransactionDto>.FailResponse("Dự án nhận phân bổ không hợp lệ");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ReceiptImageUrl))
+        {
+            return ApiResponse<TransactionDto>.FailResponse("Vui lòng cung cấp thông tin biên lai");
+        }
+
         var member = await _memberRepository.GetByIdAsync(memberId, cancellationToken);
         if (member == null)
         {
@@ -126,11 +141,18 @@ public class WalletService : IWalletService
             TransType = TransactionType.Credit,
             Status = TransactionStatus.Pending,
             Description = request.Description ?? $"Yêu cầu nạp tiền cho dự án {project.Name}",
-            RefId = request.ReceiptImageUrl
+            RefId = BuildReceiptReference(request.ReceiptImageUrl)
         };
 
-        await _transactionRepository.AddAsync(transaction, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _transactionRepository.AddAsync(transaction, cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            return ApiResponse<TransactionDto>.FailResponse("Không thể tạo yêu cầu nạp tiền. Vui lòng kiểm tra lại thông tin biên lai");
+        }
 
         return ApiResponse<TransactionDto>.SuccessResponse(new TransactionDto(
             transaction.Id,
@@ -179,10 +201,7 @@ public class WalletService : IWalletService
                     return ApiResponse<TransactionDto>.FailResponse("Không tìm thấy dự án hợp lệ để phân bổ ngân sách");
                 }
 
-                member.WalletBalance += transaction.Amount;
-                member.WalletBalance -= transaction.Amount;
                 project.WalletBalance += transaction.Amount;
-                _memberRepository.Update(member);
                 _projectRepository.Update(project);
 
                 transaction.Status = TransactionStatus.Success;
@@ -207,14 +226,6 @@ public class WalletService : IWalletService
                 transaction.EncryptedSignature = GenerateTransactionSignature(transaction);
 
                 // Send real-time notification
-                await _notificationService.SendWalletBalanceChangedToGroupAsync($"user_{transaction.MemberId}",
-                    new WalletBalanceChangedDto(
-                        member.Id,
-                        member.WalletBalance,
-                        transaction.Amount,
-                        "Credit"
-                    ));
-
                 await _notificationService.SendNotificationToGroupAsync($"user_{transaction.MemberId}",
                     new NotificationDto(
                         "Nạp tiền thành công",
@@ -366,5 +377,18 @@ public class WalletService : IWalletService
         var data = $"{transaction.Id}|{transaction.MemberId}|{transaction.Amount}|{transaction.TransType}|{transaction.CreatedAt:O}";
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(data));
         return Convert.ToHexString(bytes);
+    }
+
+    private static string BuildReceiptReference(string receiptValue)
+    {
+        var trimmed = receiptValue.Trim();
+        if (trimmed.Length <= 100)
+        {
+            return trimmed;
+        }
+
+        // Keep a deterministic short reference that always fits nvarchar(100).
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(trimmed)))[..16];
+        return $"receipt:{hash}";
     }
 }
