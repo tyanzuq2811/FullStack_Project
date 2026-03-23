@@ -1,0 +1,112 @@
+services:
+  # SQL Server Database
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: ipm-db
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Dung@28112005"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    networks:
+      - ipm-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Dung@28112005' -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: ipm-redis
+    command: redis-server --appendonly yes --requirepass redis123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ipm-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis123", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Backend API
+  api:
+    build:
+      context: ./be
+      dockerfile: Dockerfile
+    container_name: ipm-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Server=db;Database=IPMProDB;User Id=sa;Password=Dung@28112005;TrustServerCertificate=True;MultipleActiveResultSets=true
+      - ConnectionStrings__RedisConnection=redis:6379,password=redis123
+      - ConnectionStrings__HangfireConnection=Server=db;Database=IPMProDB;User Id=sa;Password=Dung@28112005;TrustServerCertificate=True
+      - Jwt__SecretKey=YourSuperSecretKeyThatIsAtLeast32CharactersLong!
+      - Jwt__ExpiresInMinutes=60
+      - Jwt__Issuer=https://localhost:7136
+      - Jwt__Audience=https://localhost:7136
+      - Database__TablePrefix=123
+      - Gemini__ApiKey=AIzaSyAp5pshKNe3UDdHWOqk5ZU69qXV1cAmizY
+      - Gemini__Model=gemini-3.0-pro
+      - Email__SmtpServer=smtp.gmail.com
+      - Email__SmtpPort=587
+      - Email__FromEmail=ltd28112005@gmail.com
+      - Email__FromPassword=cpth fgac mmcy trsu
+      - Email__EnableSsl=true
+      - App__FrontendUrl=http://web:80
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ipm-network
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost:8080/api/auth || exit 1"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 10
+    #   start_period: 120s
+    restart: unless-stopped
+
+  # Frontend Web
+  web:
+    build:
+      context: ./fe
+      dockerfile: Dockerfile
+    container_name: ipm-web
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - ipm-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+networks:
+  ipm-network:
+    driver: bridge
+
+volumes:
+  sqlserver_data:
+    driver: local
+  redis_data:
+    driver: local

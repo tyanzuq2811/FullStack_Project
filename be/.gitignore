@@ -1,0 +1,42 @@
+# Build results
+bin/
+obj/
+out/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.cache
+*.userosscache
+
+# Rider
+.idea/
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Environment and secrets
+appsettings.Development.json
+appsettings.Local.json
+*.local.json
+
+# Logs
+*.log
+logs/
+
+# Test results
+TestResults/
+coverage/
+
+# NuGet
+*.nupkg
+**/packages/*
+
+# OS generated files
+.DS_Store
+Thumbs.db

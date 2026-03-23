@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/IPM.API/IPM.API.csproj" />
+    <Project Path="src/IPM.Application/IPM.Application.csproj" />
+    <Project Path="src/IPM.Domain/IPM.Domain.csproj" />
+    <Project Path="src/IPM.Infrastructure/IPM.Infrastructure.csproj" />
+  </Folder>
+</Solution>

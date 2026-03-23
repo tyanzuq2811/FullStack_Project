@@ -1,0 +1,74 @@
+# IPM Pro Edition - Root .gitignore
+
+# MS Office temp files
+~$*
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.runtime
+.env.app
+
+# Keep shared template env file in repo
+!.env.example
+
+# Secrets and local overrides
+**/secrets.json
+**/*secrets*.json
+
+# IDE
+.idea/
+.vscode/
+*.sw?
+.vs/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Node / frontend build artifacts
+**/node_modules/
+**/dist/
+**/.vite/
+**/.cache/
+**/.eslintcache
+**/coverage/
+
+# .NET / C# build artifacts
+**/bin/
+**/obj/
+**/TestResults/
+*.user
+*.suo
+
+# Database and local data files
+*.mdf
+*.ldf
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker local overrides
+docker-compose.override.yml
+
+# Archives
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+
+# Misc
+*.bak
+*.backup
