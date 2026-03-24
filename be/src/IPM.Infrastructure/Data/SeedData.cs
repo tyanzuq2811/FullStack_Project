@@ -10,31 +10,65 @@ public static class SeedData
 {
     public static async Task SeedAsync(ApplicationDbContext context, UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager)
     {
-        // Seed Roles
-        await SeedRolesAsync(roleManager);
+        await SafeSeedStepAsync("roles", () => SeedRolesAsync(roleManager));
 
-        // Seed Users and Members
-        var members = await SeedUsersAndMembersAsync(context, userManager);
+        var members = await SafeSeedStepAsync(
+            "users-members",
+            () => SeedUsersAndMembersAsync(context, userManager),
+            async () => await context.Members.ToDictionaryAsync(m => m.Email, m => m, StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, Member>(StringComparer.OrdinalIgnoreCase));
 
-        // Seed Resources
-        var resources = await SeedResourcesAsync(context);
+        var resources = await SafeSeedStepAsync(
+            "resources",
+            () => SeedResourcesAsync(context),
+            async () => await context.Resources.ToListAsync(),
+            new List<Resource>());
 
-        // Seed Projects
-        var projects = await SeedProjectsAsync(context, members);
+        var projects = await SafeSeedStepAsync(
+            "projects",
+            () => SeedProjectsAsync(context, members),
+            async () => await context.Projects.ToListAsync(),
+            new List<Project>());
 
-        // Seed Tasks
-        await SeedTasksAsync(context, projects, members);
-
-        // Seed Bookings
-        await SeedBookingsAsync(context, members, resources);
-
-        // Seed News
-        await SeedNewsAsync(context);
-
-        // Seed Wallet Transactions
-        await SeedWalletTransactionsAsync(context, members);
+        await SafeSeedStepAsync("tasks", () => SeedTasksAsync(context, projects, members));
+        await SafeSeedStepAsync("bookings", () => SeedBookingsAsync(context, members, resources, projects));
+        await SafeSeedStepAsync("news", () => SeedNewsAsync(context));
+        await SafeSeedStepAsync("wallet-transactions", () => SeedWalletTransactionsAsync(context, members));
 
         await context.SaveChangesAsync();
+    }
+
+    private static async Task SafeSeedStepAsync(string stepName, Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SeedData] Step '{stepName}' failed: {ex.Message}");
+        }
+    }
+
+    private static async Task<T> SafeSeedStepAsync<T>(string stepName, Func<Task<T>> action, Func<Task<T>> fallback, T fallbackOnFailure)
+    {
+        try
+        {
+            return await action();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SeedData] Step '{stepName}' failed: {ex.Message}");
+            try
+            {
+                return await fallback();
+            }
+            catch (Exception fallbackEx)
+            {
+                Console.WriteLine($"[SeedData] Step '{stepName}' fallback failed: {fallbackEx.Message}");
+                return fallbackOnFailure;
+            }
+        }
     }
 
     private static async Task SeedRolesAsync(RoleManager<IdentityRole> roleManager)
@@ -54,11 +88,6 @@ public static class SeedData
         ApplicationDbContext context,
         UserManager<ApplicationUser> userManager)
     {
-        var members = new Dictionary<string, Member>();
-
-        if (await context.Members.AnyAsync())
-            return await context.Members.ToDictionaryAsync(m => m.Email, m => m);
-
         var usersData = new[]
         {
             // Admin - main test account
@@ -84,21 +113,37 @@ public static class SeedData
             new { Email = "client.mai@gmail.com", FullName = "Phan Thị Mai", Phone = "0911234567", Role = "Client", Elo = 1200.0, Balance = 80000000m, Password = "Password@123" },
         };
 
+        var existingMembers = await context.Members.ToListAsync();
+        var members = existingMembers.ToDictionary(m => m.Email, m => m, StringComparer.OrdinalIgnoreCase);
+
         foreach (var userData in usersData)
         {
-            var user = new ApplicationUser
-            {
-                UserName = userData.Email,
-                Email = userData.Email,
-                EmailConfirmed = true
-            };
+            var user = await userManager.FindByEmailAsync(userData.Email);
 
-            var result = await userManager.CreateAsync(user, userData.Password);
-            if (result.Succeeded)
+            if (user == null)
+            {
+                user = new ApplicationUser
+                {
+                    UserName = userData.Email,
+                    Email = userData.Email,
+                    EmailConfirmed = true
+                };
+
+                var createResult = await userManager.CreateAsync(user, userData.Password);
+                if (!createResult.Succeeded)
+                {
+                    continue;
+                }
+            }
+
+            if (!await userManager.IsInRoleAsync(user, userData.Role))
             {
                 await userManager.AddToRoleAsync(user, userData.Role);
+            }
 
-                var member = new Member
+            if (!members.TryGetValue(userData.Email, out var member))
+            {
+                member = new Member
                 {
                     Id = Guid.NewGuid(),
                     UserId = user.Id,
@@ -121,10 +166,7 @@ public static class SeedData
 
     private static async Task<List<Resource>> SeedResourcesAsync(ApplicationDbContext context)
     {
-        if (await context.Resources.AnyAsync())
-            return await context.Resources.ToListAsync();
-
-        var resources = new List<Resource>
+        var templates = new[]
         {
             new Resource { Name = "Đội thợ điện chuyên nghiệp", Description = "Đội 5 người, chuyên lắp đặt hệ thống điện dân dụng và công nghiệp", HourlyRate = 500000m, IsActive = true },
             new Resource { Name = "Đội thợ nước Đại Phát", Description = "Đội 4 người, chuyên lắp đặt hệ thống cấp thoát nước", HourlyRate = 450000m, IsActive = true },
@@ -138,25 +180,38 @@ public static class SeedData
             new Resource { Name = "Phòng họp dự án", Description = "Phòng họp 15 người, có màn chiếu và thiết bị họp trực tuyến", HourlyRate = 1000000m, IsActive = true },
         };
 
-        context.Resources.AddRange(resources);
-        await context.SaveChangesAsync();
-        return resources;
+        var existingNames = await context.Resources
+            .Select(r => r.Name)
+            .ToListAsync();
+
+        var existingNameSet = new HashSet<string>(existingNames, StringComparer.OrdinalIgnoreCase);
+        var missingResources = templates
+            .Where(t => !existingNameSet.Contains(t.Name))
+            .ToList();
+
+        if (missingResources.Count > 0)
+        {
+            context.Resources.AddRange(missingResources);
+            await context.SaveChangesAsync();
+        }
+
+        return await context.Resources.ToListAsync();
     }
 
     private static async Task<List<Project>> SeedProjectsAsync(
         ApplicationDbContext context,
         Dictionary<string, Member> members)
     {
-        if (await context.Projects.AnyAsync())
+        if (!members.TryGetValue("pm@ipm.vn", out var pmHoang) ||
+            !members.TryGetValue("pm.thao@ipm.vn", out var pmThao) ||
+            !members.TryGetValue("client@ipm.vn", out var clientLan) ||
+            !members.TryGetValue("client.nam@gmail.com", out var clientNam) ||
+            !members.TryGetValue("client.mai@gmail.com", out var clientMai))
+        {
             return await context.Projects.ToListAsync();
+        }
 
-        var pmHoang = members["pm@ipm.vn"];
-        var pmThao = members["pm.thao@ipm.vn"];
-        var clientLan = members["client@ipm.vn"];
-        var clientNam = members["client.nam@gmail.com"];
-        var clientMai = members["client.mai@gmail.com"];
-
-        var projects = new List<Project>
+        var templates = new[]
         {
             new Project
             {
@@ -215,9 +270,22 @@ public static class SeedData
             },
         };
 
-        context.Projects.AddRange(projects);
-        await context.SaveChangesAsync();
-        return projects;
+        var existingNames = await context.Projects
+            .Select(p => p.Name)
+            .ToListAsync();
+
+        var existingNameSet = new HashSet<string>(existingNames, StringComparer.OrdinalIgnoreCase);
+        var missingProjects = templates
+            .Where(t => !existingNameSet.Contains(t.Name))
+            .ToList();
+
+        if (missingProjects.Count > 0)
+        {
+            context.Projects.AddRange(missingProjects);
+            await context.SaveChangesAsync();
+        }
+
+        return await context.Projects.ToListAsync();
     }
 
     private static async Task SeedTasksAsync(
@@ -225,18 +293,36 @@ public static class SeedData
         List<Project> projects,
         Dictionary<string, Member> members)
     {
-        if (await context.Tasks.AnyAsync())
-            return;
-
         var contractors = members
             .Where(m => m.Key.Contains("contractor"))
             .Select(m => m.Value)
             .ToList();
 
+        if (contractors.Count == 0)
+        {
+            return;
+        }
+
+        var targetProjectNames = new[]
+        {
+            "Căn hộ Vinhomes Grand Park - A1205",
+            "Biệt thự Phú Mỹ Hưng - Khu E",
+            "Văn phòng Sunwah Tower - Tầng 15"
+        };
+
+        var targetProjects = projects
+            .Where(p => targetProjectNames.Contains(p.Name, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        if (targetProjects.Count == 0)
+        {
+            targetProjects = projects.Take(3).ToList();
+        }
+
         var tasks = new List<ProjectTask>();
         var random = new Random(42);
 
-        foreach (var project in projects.Take(3))
+        foreach (var project in targetProjects)
         {
             var taskTemplates = new[]
             {
@@ -255,9 +341,22 @@ public static class SeedData
                 new { Name = "Lắp đặt cửa gỗ", Phase = PhaseType.Woodwork, Days = 3, Cost = 42000000m },
             };
 
+            var existingTaskNames = await context.Tasks
+                .Where(t => t.ProjectId == project.Id)
+                .Select(t => t.Name)
+                .ToListAsync();
+
+            var existingTaskNameSet = new HashSet<string>(existingTaskNames, StringComparer.OrdinalIgnoreCase);
+
             var startDate = project.StartDate;
             foreach (var template in taskTemplates)
             {
+                if (existingTaskNameSet.Contains(template.Name))
+                {
+                    startDate = startDate.AddDays(template.Days);
+                    continue;
+                }
+
                 var status = project.Status switch
                 {
                     ProjectStatus.Completed => ProjectTaskStatus.Approved,
@@ -299,21 +398,38 @@ public static class SeedData
     private static async Task SeedBookingsAsync(
         ApplicationDbContext context,
         Dictionary<string, Member> members,
-        List<Resource> resources)
+        List<Resource> resources,
+        List<Project> projects)
     {
-        if (await context.Bookings.AnyAsync())
+        if (!members.TryGetValue("pm@ipm.vn", out var pmHoang) ||
+            !members.TryGetValue("pm.thao@ipm.vn", out var pmThao))
+        {
             return;
+        }
 
-        var pmHoang = members["pm@ipm.vn"];
-        var pmThao = members["pm.thao@ipm.vn"];
+        var projectVinhomes = projects.FirstOrDefault(p => p.Name.Contains("Vinhomes Grand Park", StringComparison.OrdinalIgnoreCase));
+        var projectSunwah = projects.FirstOrDefault(p => p.Name.Contains("Sunwah Tower", StringComparison.OrdinalIgnoreCase));
+        var projectNhaPho = projects.FirstOrDefault(p => p.Name.Contains("Nhà phố Thảo Điền", StringComparison.OrdinalIgnoreCase));
 
-        var bookings = new List<Booking>
+        var resourceThoDien = resources.FirstOrDefault(r => r.Name.Contains("Đội thợ điện", StringComparison.OrdinalIgnoreCase));
+        var resourceThoMoc = resources.FirstOrDefault(r => r.Name.Contains("Đội thợ mộc", StringComparison.OrdinalIgnoreCase));
+        var resourceXeTai = resources.FirstOrDefault(r => r.Name.Contains("Xe tải Hyundai", StringComparison.OrdinalIgnoreCase));
+        var resourcePhongHop = resources.FirstOrDefault(r => r.Name.Contains("Phòng họp dự án", StringComparison.OrdinalIgnoreCase));
+
+        if (projectVinhomes == null || projectSunwah == null || projectNhaPho == null ||
+            resourceThoDien == null || resourceThoMoc == null || resourceXeTai == null || resourcePhongHop == null)
+        {
+            return;
+        }
+
+        var bookingTemplates = new List<Booking>
         {
             new Booking
             {
                 Id = Guid.NewGuid(),
-                ResourceId = resources[0].Id,
+                ResourceId = resourceThoDien.Id,
                 MemberId = pmHoang.Id,
+                ProjectId = projectVinhomes.Id,
                 StartTime = DateTime.UtcNow.AddDays(1).Date.AddHours(8),
                 EndTime = DateTime.UtcNow.AddDays(1).Date.AddHours(17),
                 Price = 4500000m,
@@ -323,8 +439,9 @@ public static class SeedData
             new Booking
             {
                 Id = Guid.NewGuid(),
-                ResourceId = resources[2].Id,
+                ResourceId = resourceThoMoc.Id,
                 MemberId = pmThao.Id,
+                ProjectId = projectSunwah.Id,
                 StartTime = DateTime.UtcNow.AddDays(2).Date.AddHours(8),
                 EndTime = DateTime.UtcNow.AddDays(4).Date.AddHours(17),
                 Price = 14400000m,
@@ -334,8 +451,9 @@ public static class SeedData
             new Booking
             {
                 Id = Guid.NewGuid(),
-                ResourceId = resources[5].Id,
+                ResourceId = resourceXeTai.Id,
                 MemberId = pmHoang.Id,
+                ProjectId = projectVinhomes.Id,
                 StartTime = DateTime.UtcNow.AddDays(3).Date.AddHours(7),
                 EndTime = DateTime.UtcNow.AddDays(3).Date.AddHours(12),
                 Price = 4000000m,
@@ -345,8 +463,9 @@ public static class SeedData
             new Booking
             {
                 Id = Guid.NewGuid(),
-                ResourceId = resources[9].Id,
+                ResourceId = resourcePhongHop.Id,
                 MemberId = pmThao.Id,
+                ProjectId = projectNhaPho.Id,
                 StartTime = DateTime.UtcNow.AddDays(1).Date.AddHours(14),
                 EndTime = DateTime.UtcNow.AddDays(1).Date.AddHours(16),
                 Price = 2000000m,
@@ -355,16 +474,29 @@ public static class SeedData
             },
         };
 
-        context.Bookings.AddRange(bookings);
-        await context.SaveChangesAsync();
+        var existingSignatures = await context.Bookings
+            .Select(b => new { b.ProjectId, b.ResourceId, b.MemberId, b.StartTime, b.EndTime })
+            .ToListAsync();
+
+        var missingBookings = bookingTemplates
+            .Where(template => !existingSignatures.Any(existing =>
+                existing.ProjectId == template.ProjectId &&
+                existing.ResourceId == template.ResourceId &&
+                existing.MemberId == template.MemberId &&
+                existing.StartTime == template.StartTime &&
+                existing.EndTime == template.EndTime))
+            .ToList();
+
+        if (missingBookings.Count > 0)
+        {
+            context.Bookings.AddRange(missingBookings);
+            await context.SaveChangesAsync();
+        }
     }
 
     private static async Task SeedNewsAsync(ApplicationDbContext context)
     {
-        if (await context.News.AnyAsync())
-            return;
-
-        var news = new List<News>
+        var templates = new List<News>
         {
             new News
             {
@@ -396,22 +528,34 @@ public static class SeedData
             },
         };
 
-        context.News.AddRange(news);
-        await context.SaveChangesAsync();
+        var existingTitles = await context.News
+            .Select(n => n.Title)
+            .ToListAsync();
+
+        var existingTitleSet = new HashSet<string>(existingTitles, StringComparer.OrdinalIgnoreCase);
+        var missingNews = templates
+            .Where(t => !existingTitleSet.Contains(t.Title))
+            .ToList();
+
+        if (missingNews.Count > 0)
+        {
+            context.News.AddRange(missingNews);
+            await context.SaveChangesAsync();
+        }
     }
 
     private static async Task SeedWalletTransactionsAsync(
         ApplicationDbContext context,
         Dictionary<string, Member> members)
     {
-        if (await context.WalletTransactions.AnyAsync())
+        if (!members.TryGetValue("pm@ipm.vn", out var pmHoang) ||
+            !members.TryGetValue("contractor@ipm.vn", out var contractorHung) ||
+            !members.TryGetValue("client@ipm.vn", out var clientLan))
+        {
             return;
+        }
 
-        var pmHoang = members["pm@ipm.vn"];
-        var contractorHung = members["contractor@ipm.vn"];
-        var clientLan = members["client@ipm.vn"];
-
-        var transactions = new List<WalletTransaction>
+        var templates = new List<WalletTransaction>
         {
             new WalletTransaction
             {
@@ -475,7 +619,20 @@ public static class SeedData
             },
         };
 
-        context.WalletTransactions.AddRange(transactions);
-        await context.SaveChangesAsync();
+        var existingDescriptions = await context.WalletTransactions
+            .Select(t => t.Description)
+            .Where(d => !string.IsNullOrWhiteSpace(d))
+            .ToListAsync();
+
+        var existingDescriptionSet = new HashSet<string>(existingDescriptions!, StringComparer.OrdinalIgnoreCase);
+        var missingTransactions = templates
+            .Where(t => string.IsNullOrWhiteSpace(t.Description) || !existingDescriptionSet.Contains(t.Description))
+            .ToList();
+
+        if (missingTransactions.Count > 0)
+        {
+            context.WalletTransactions.AddRange(missingTransactions);
+            await context.SaveChangesAsync();
+        }
     }
 }
